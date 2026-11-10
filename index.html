@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>車隊油單發票快速掃描</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
+    body { background-color: #0F172A; color: #FFFFFF; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px; text-align: center; }
+
+    .scanner-shell { width: 100%; max-width: 380px; background: #1E293B; border: 1px solid #334155; border-radius: 20px; padding: 20px 18px; box-shadow: 0 12px 30px rgba(0,0,0,0.45); display: flex; flex-direction: column; align-items: center; }
+    .header-row { width: 100%; display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .header-title { font-size: 18px; font-weight: bold; color: #F59E0B; display: flex; align-items: center; gap: 6px; }
+    .btn-top-close { background: #334155; color: #CBD5E1; border: 1px solid #475569; padding: 6px 12px; border-radius: 8px; font-size: 13px; cursor: pointer; }
+
+    .sub-desc { font-size: 13px; color: #94A3B8; margin-bottom: 12px; line-height: 1.5; }
+
+    .video-wrap { position: relative; width: 100%; aspect-ratio: 4 / 3; background: #000000; border-radius: 14px; overflow: hidden; border: 2px solid #059669; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; }
+    video { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .scan-frame { position: absolute; width: 68%; height: 68%; border: 2px dashed rgba(16, 185, 129, 0.85); border-radius: 12px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.32); pointer-events: none; }
+    .scan-line { position: absolute; left: 16%; right: 16%; height: 2px; background: #10B981; box-shadow: 0 0 8px #10B981; animation: scanMove 2s ease-in-out infinite; pointer-events: none; }
+    @keyframes scanMove { 0%, 100% { top: 20%; } 50% { top: 78%; } }
+
+    .live-hint { font-size: 13px; color: #10B981; font-weight: bold; min-height: 20px; margin-bottom: 12px; }
+
+    .btn-main { position: relative; overflow: hidden; width: 100%; padding: 14px 18px; font-size: 16px; font-weight: bold; border-radius: 12px; border: none; background: #059669; color: #FFFFFF; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 10px; }
+    .btn-sub { position: relative; overflow: hidden; width: 100%; padding: 12px 16px; font-size: 14px; font-weight: bold; border-radius: 10px; background: #334155; color: #CBD5E1; border: 1px solid #475569; display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; }
+    .hidden-file-input { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; z-index: 10; }
+
+    .setup-box { display: none; width: 100%; background: #0F172A; border: 1px solid #475569; border-radius: 12px; padding: 14px; margin-top: 12px; text-align: left; }
+    .setup-box label { font-size: 12px; color: #F59E0B; font-weight: bold; display: block; margin-bottom: 6px; }
+    .setup-box input { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #334155; background: #1E293B; color: #FFF; font-size: 13px; margin-bottom: 8px; }
+    .setup-box button { width: 100%; padding: 10px; border-radius: 8px; border: none; background: #3B82F6; color: #FFF; font-weight: bold; cursor: pointer; }
+
+    .status-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(15, 23, 42, 0.98); flex-direction: column; justify-content: center; align-items: center; padding: 24px; text-align: center; z-index: 100; }
+    .spinner { width: 48px; height: 48px; border: 4px solid #334155; border-top: 4px solid #10B981; border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 20px; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    .success-badge { font-size: 56px; color: #10B981; margin-bottom: 12px; }
+    .error-badge { font-size: 56px; color: #EF4444; margin-bottom: 12px; }
+    .btn-action { position: relative; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; width: 100%; max-width: 240px; margin-top: 14px; padding: 13px 18px; font-size: 15px; font-weight: bold; border-radius: 10px; border: none; cursor: pointer; }
+    .btn-retry { background: #059669; color: #FFFFFF; }
+    .btn-back { background: #475569; color: #FFFFFF; }
+  </style>
+</head>
+<body>
+  <div class="scanner-shell">
+    <div class="header-row">
+      <div class="header-title">⛽ 車隊油單自動掃描</div>
+      <button type="button" class="btn-top-close" onclick="closeApp()">✕ 關閉</button>
+    </div>
+    <div class="sub-desc">將發票【左側主要 QR Code】對準綠框即可自動感應（免按快門、自動過濾右碼）</div>
+
+    <div class="video-wrap">
+      <video id="video" playsinline autoplay muted></video>
+      <div class="scan-frame"></div>
+      <div class="scan-line"></div>
+    </div>
+
+    <div id="liveHint" class="live-hint">📷 正在啟動即時鏡頭...</div>
+
+    <button id="btnStartCam" type="button" class="btn-main" style="display:none;" onclick="startLiveCamera()">
+      📷 點擊啟動即時相機
+    </button>
+
+    <label class="btn-sub">
+      📸 若無法對焦，點此拍照 / 選取照片辨識
+      <input type="file" accept="image/*" capture="environment" class="hidden-file-input" onchange="onFileSelected(this)">
+    </label>
+
+    <div id="setupBox" class="setup-box">
+      <label>⚙️ 首次設定：請貼上您的 Google Apps Script 網頁應用程式網址 (/exec 結尾)</label>
+      <input id="gasUrlInput" type="url" placeholder="https://script.google.com/macros/s/.../exec">
+      <button type="button" onclick="saveGasUrl()">儲存後台網址</button>
+    </div>
+  </div>
+
+  <div id="statusOverlay" class="status-overlay">
+    <div id="statusSpinner" class="spinner"></div>
+    <div id="statusIcon"></div>
+    <h2 id="statusTitle" style="font-size: 19px; font-weight: bold; margin-bottom: 8px;">驗證中...</h2>
+    <p id="statusDesc" style="font-size: 14px; color: #D1D5DB; white-space: pre-line; line-height: 1.6; max-width: 320px;"></p>
+    <button type="button" id="btnRetry" class="btn-action btn-retry" style="display:none;" onclick="resumeScanning()">🔄 繼續掃描下一張</button>
+    <button type="button" id="btnClose" class="btn-action btn-back" style="display:none;" onclick="closeApp()">關閉視窗返回 LINE</button>
+  </div>
+
+  <script>
+    // 已綁定車隊專屬 Google Apps Script 網頁應用程式網址
+    var DEFAULT_GAS_URL = "https://script.google.com/macros/s/AKfycbzyyg3iuJb9uSXEr8QJQc4s-snb6w4_ZLwITWgJSI2utUkBkxUsnX03Cure0NKE3hVi/exec";
+    var activeUserId = "";
+    var liffIdConfig = "";
+    var gasEndpoint = DEFAULT_GAS_URL;
+    var videoStream = null;
+    var scanTimer = null;
+    var isProcessing = false;
+    var workCanvas = document.createElement("canvas");
+    var workCtx = workCanvas.getContext("2d", { willReadFrequently: true });
+
+    try {
+      var urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get("liffId")) liffIdConfig = urlParams.get("liffId");
+      if (urlParams.get("uid")) activeUserId = urlParams.get("uid");
+      if (urlParams.get("gas")) {
+        gasEndpoint = urlParams.get("gas");
+      }
+    } catch (e) {}
+
+    function saveGasUrl() {
+      var val = document.getElementById("gasUrlInput").value.trim();
+      if (!val || val.indexOf("script.google.com") === -1) {
+        alert("請輸入正確的 Google Apps Script 網址（https://script.google.com/macros/s/.../exec）");
+        return;
+      }
+      gasEndpoint = val;
+      localStorage.setItem("FLEET_GAS_URL", val);
+      document.getElementById("setupBox").style.display = "none";
+      alert("儲存成功！您也可以將 LIFF 網址改為：\n" + window.location.origin + window.location.pathname + "?gas=" + encodeURIComponent(val));
+    }
+
+    function playBeep() {
+      try {
+        var ctx = new (window.AudioContext || window.webkitAudioContext)();
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = "sine";
+        osc.frequency.value = 880;
+        gain.gain.value = 0.2;
+        osc.start();
+        setTimeout(function() { osc.stop(); ctx.close(); }, 120);
+      } catch (e) {}
+    }
+
+    function isLeftInvoiceQr(text) {
+      if (!text || typeof text !== "string") return false;
+      var t = text.trim();
+      return /^[A-Z]{2}[0-9]{8}/.test(t) && t.length >= 45;
+    }
+
+    // 單張畫布雙碼處理：若先掃到右邊 ** 條碼，自動將該區塊塗白並立刻重掃同一張畫面抓出左碼
+    function scanCanvasForLeftQr(canvas, ctx, fallbackCodes) {
+      if (!window.jsQR) return null;
+      for (var attempt = 0; attempt < 3; attempt++) {
+        var imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        var code = jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: "attemptBoth" });
+        if (!code || !code.data) break;
+        var val = code.data.trim();
+        if (isLeftInvoiceQr(val)) return val;
+        if (val && fallbackCodes) fallbackCodes.push(val);
+
+        var loc = code.location;
+        if (loc && loc.topLeftCorner && loc.bottomRightCorner) {
+          var xs = [loc.topLeftCorner.x, loc.topRightCorner.x, loc.bottomLeftCorner.x, loc.bottomRightCorner.x];
+          var ys = [loc.topLeftCorner.y, loc.topRightCorner.y, loc.bottomLeftCorner.y, loc.bottomRightCorner.y];
+          var minX = Math.max(0, Math.min.apply(null, xs) - 8);
+          var minY = Math.max(0, Math.min.apply(null, ys) - 8);
+          var maxX = Math.min(canvas.width, Math.max.apply(null, xs) + 8);
+          var maxY = Math.min(canvas.height, Math.max.apply(null, ys) + 8);
+          ctx.fillStyle = "#FFFFFF";
+          ctx.fillRect(minX, minY, maxX - minX, maxY - minY);
+        } else {
+          break;
+        }
+      }
+      return null;
+    }
+
+    function startLiveCamera() {
+      var video = document.getElementById("video");
+      var hint = document.getElementById("liveHint");
+      var btnStart = document.getElementById("btnStartCam");
+      btnStart.style.display = "none";
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        hint.innerText = "⚠️ 此環境不支援即時串流，請點擊下方按鈕拍照辨識";
+        return;
+      }
+
+      navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 960 }
+        }
+      }).then(function(stream) {
+        videoStream = stream;
+        video.srcObject = stream;
+        video.setAttribute("playsinline", "true");
+        video.play();
+        hint.innerText = "🟢 鏡頭已啟動，對準發票左側 QR Code 自動感應中...";
+
+        if (scanTimer) clearInterval(scanTimer);
+        scanTimer = setInterval(scanVideoFrame, 110);
+      }).catch(function(err) {
+        hint.innerText = "⚠️ 請點擊下方按鈕授權啟動鏡頭或直接拍照辨識";
+        btnStart.style.display = "flex";
+      });
+    }
+
+    function stopLiveCamera() {
+      if (scanTimer) {
+        clearInterval(scanTimer);
+        scanTimer = null;
+      }
+      if (videoStream) {
+        videoStream.getTracks().forEach(function(t) { t.stop(); });
+        videoStream = null;
+      }
+    }
+
+    function scanVideoFrame() {
+      if (isProcessing) return;
+      var video = document.getElementById("video");
+      if (!video || video.readyState !== video.HAVE_ENOUGH_DATA || !video.videoWidth) return;
+
+      workCanvas.width = video.videoWidth;
+      workCanvas.height = video.videoHeight;
+      workCtx.drawImage(video, 0, 0, workCanvas.width, workCanvas.height);
+
+      var fallbacks = [];
+      var foundLeft = scanCanvasForLeftQr(workCanvas, workCtx, fallbacks);
+      if (foundLeft) {
+        onScanSuccess(foundLeft);
+      } else if (fallbacks.length > 0) {
+        document.getElementById("liveHint").innerText = "👀 已偵測到右側條碼，請將鏡頭稍微往左移對準左碼...";
+      }
+    }
+
+    function onFileSelected(input) {
+      if (!input || !input.files || input.files.length === 0) return;
+      var file = input.files[0];
+      isProcessing = false;
+      showStatus("loading", "⏳ 正在辨識發票...", "正在從照片鎖定左側主要 QR Code...");
+
+      var img = new Image();
+      var url = URL.createObjectURL(file);
+      img.onload = function() {
+        URL.revokeObjectURL(url);
+        input.value = "";
+        var regions = [[0, 0, 1, 1], [0, 0.2, 0.68, 0.8], [0, 0, 0.68, 1]];
+        var sizes = [1400, 900, 2000];
+        var fallbacks = [];
+
+        for (var s = 0; s < sizes.length; s++) {
+          for (var r = 0; r < regions.length; r++) {
+            var reg = regions[r];
+            var sx = Math.floor(img.width * reg[0]);
+            var sy = Math.floor(img.height * reg[1]);
+            var sw = Math.floor(img.width * reg[2]);
+            var sh = Math.floor(img.height * reg[3]);
+            var scale = Math.min(1, sizes[s] / Math.max(sw, sh));
+            workCanvas.width = Math.max(1, Math.floor(sw * scale));
+            workCanvas.height = Math.max(1, Math.floor(sh * scale));
+            workCtx.drawImage(img, sx, sy, sw, sh, 0, 0, workCanvas.width, workCanvas.height);
+            var found = scanCanvasForLeftQr(workCanvas, workCtx, fallbacks);
+            if (found) {
+              onScanSuccess(found);
+              return;
+            }
+          }
+        }
+        showStatus("error", "⚠️ 未能清晰辨識", "請確保發票【左側 QR Code】清晰入鏡後重試。");
+      };
+      img.src = url;
+    }
+
+    function onScanSuccess(decodedText) {
+      if (isProcessing) return;
+      if (!gasEndpoint) {
+        document.getElementById("setupBox").style.display = "block";
+        alert("請先在下方貼上您的 Google Apps Script 網址 (/exec)");
+        return;
+      }
+      isProcessing = true;
+      stopLiveCamera();
+      playBeep();
+      if (navigator.vibrate) navigator.vibrate(100);
+
+      showStatus("loading", "⏳ 正在自動登錄發票...", "成功抓取發票左碼！正在寫入車隊試算表...");
+
+      var reqUrl = gasEndpoint + (gasEndpoint.indexOf("?") === -1 ? "?" : "&") +
+        "action=submit_fuel_qr&qrText=" + encodeURIComponent(decodedText) +
+        "&userId=" + encodeURIComponent(activeUserId || "");
+
+      fetch(reqUrl, { method: "GET", redirect: "follow" })
+        .then(function(r) { return r.json(); })
+        .then(function(res) {
+          isProcessing = false;
+          if (res && res.success) {
+            showStatus("success", "✅ 登錄成功！", (res.message || "油單已寫入試算表") + "\n\n視窗即將自動關閉...");
+            setTimeout(function() { closeApp(); }, 2000);
+          } else {
+            showStatus("error", "⚠️ 無法登錄", (res && res.message) ? res.message : "發票格式或統編未符合車隊規範。");
+          }
+        })
+        .catch(function(err) {
+          isProcessing = false;
+          showStatus("error", "❌ 系統通訊異常", "連線至車隊後台失敗，請確認網路或 GAS 部署權限。\n錯誤：" + (err.message || err));
+        });
+    }
+
+    function resumeScanning() {
+      isProcessing = false;
+      document.getElementById("statusOverlay").style.display = "none";
+      startLiveCamera();
+    }
+
+    function showStatus(type, title, desc) {
+      var overlay = document.getElementById("statusOverlay");
+      var spinner = document.getElementById("statusSpinner");
+      var icon = document.getElementById("statusIcon");
+      var titleEl = document.getElementById("statusTitle");
+      var descEl = document.getElementById("statusDesc");
+      var btnRetry = document.getElementById("btnRetry");
+      var btnClose = document.getElementById("btnClose");
+
+      overlay.style.display = "flex";
+      titleEl.innerText = title;
+      descEl.innerText = desc;
+
+      if (type === "loading") {
+        spinner.style.display = "block";
+        icon.innerHTML = "";
+        btnRetry.style.display = "none";
+        btnClose.style.display = "none";
+      } else if (type === "success") {
+        spinner.style.display = "none";
+        icon.innerHTML = "<div class='success-badge'>✓</div>";
+        btnRetry.style.display = "inline-flex";
+        btnClose.style.display = "inline-flex";
+      } else {
+        spinner.style.display = "none";
+        icon.innerHTML = "<div class='error-badge'>✗</div>";
+        btnRetry.style.display = "inline-flex";
+        btnClose.style.display = "inline-flex";
+      }
+    }
+
+    function closeApp() {
+      stopLiveCamera();
+      try {
+        if (window.liff && liff.isInClient && liff.isInClient()) {
+          liff.closeWindow();
+        }
+      } catch (e) {}
+      try { window.close(); } catch (e) {}
+    }
+
+    window.onload = function() {
+      if (!gasEndpoint) {
+        document.getElementById("setupBox").style.display = "block";
+      }
+      if (window.liff && liffIdConfig) {
+        liff.init({ liffId: liffIdConfig }).then(function() {
+          if (liff.isLoggedIn()) {
+            liff.getProfile().then(function(p) {
+              if (p && p.userId) activeUserId = p.userId;
+            }).catch(function() {});
+          }
+          var ctx = liff.getContext();
+          if (ctx && ctx.userId) activeUserId = ctx.userId;
+        }).catch(function() {});
+      }
+      startLiveCamera();
+    };
+  </script>
+</body>
+</html>
+
