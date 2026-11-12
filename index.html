@@ -13,6 +13,7 @@
     .scanner-shell { width: 100%; max-width: 380px; background: #1E293B; border: 1px solid #334155; border-radius: 20px; padding: 20px 18px; box-shadow: 0 12px 30px rgba(0,0,0,0.45); display: flex; flex-direction: column; align-items: center; }
     .header-row { width: 100%; display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
     .header-title { font-size: 18px; font-weight: bold; color: #F59E0B; display: flex; align-items: center; gap: 6px; }
+    .scan-count-badge { background: #065F46; color: #34D399; border: 1px solid #059669; font-size: 12px; padding: 2px 8px; border-radius: 999px; font-weight: bold; display: none; }
     .btn-top-close { background: #334155; color: #CBD5E1; border: 1px solid #475569; padding: 6px 12px; border-radius: 8px; font-size: 13px; cursor: pointer; }
 
     .sub-desc { font-size: 13px; color: #94A3B8; margin-bottom: 12px; line-height: 1.5; }
@@ -47,10 +48,13 @@
 <body>
   <div class="scanner-shell">
     <div class="header-row">
-      <div class="header-title">⛽ 車隊油單自動掃描</div>
+      <div class="header-title">
+        <span>⛽ 車隊油單自動掃描</span>
+        <span id="scanCountBadge" class="scan-count-badge">已登錄 0 張</span>
+      </div>
       <button type="button" class="btn-top-close" onclick="closeApp()">✕ 關閉</button>
     </div>
-    <div class="sub-desc">將發票【左側主要 QR Code】對準綠框即可自動感應（免按快門、自動過濾右碼）</div>
+    <div class="sub-desc">將發票【左側主要 QR Code】對準綠框即可連續自動感應（免按快門、自動過濾右碼）</div>
 
     <div class="video-wrap">
       <video id="video" playsinline autoplay muted></video>
@@ -94,6 +98,8 @@
     var videoStream = null;
     var scanTimer = null;
     var isProcessing = false;
+    var scannedInvoices = {};
+    var successCount = 0;
     var workCanvas = document.createElement("canvas");
     var workCtx = workCanvas.getContext("2d", { willReadFrequently: true });
 
@@ -173,6 +179,15 @@
       var btnStart = document.getElementById("btnStartCam");
       btnStart.style.display = "none";
 
+      // 若鏡頭串流已經保持開啟，直接恢復連續掃描，不重複呼叫 getUserMedia 避免再次彈出權限詢問
+      if (videoStream && videoStream.active) {
+        video.play().catch(function() {});
+        hint.innerText = "🟢 鏡頭運作中，請對準下一張發票左側 QR Code...";
+        if (scanTimer) clearInterval(scanTimer);
+        scanTimer = setInterval(scanVideoFrame, 110);
+        return;
+      }
+
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         hint.innerText = "⚠️ 此環境不支援即時串流，請點擊下方按鈕拍照辨識";
         return;
@@ -223,6 +238,11 @@
       var fallbacks = [];
       var foundLeft = scanCanvasForLeftQr(workCanvas, workCtx, fallbacks);
       if (foundLeft) {
+        var invNo = foundLeft.trim().substring(0, 10);
+        if (scannedInvoices[invNo]) {
+          document.getElementById("liveHint").innerText = "✅ 發票 " + invNo + " 已掃過，請直接換下一張發票...";
+          return;
+        }
         onScanSuccess(foundLeft);
       } else if (fallbacks.length > 0) {
         document.getElementById("liveHint").innerText = "👀 已偵測到右側條碼，請將鏡頭稍微往左移對準左碼...";
@@ -275,11 +295,13 @@
         return;
       }
       isProcessing = true;
-      stopLiveCamera();
+      var invNo = decodedText.trim().substring(0, 10);
+      scannedInvoices[invNo] = true;
+      // 保持鏡頭串流不關閉 (不呼叫 stopLiveCamera)，連續掃描下一張時免重新授權、秒開免等待！
       playBeep();
       if (navigator.vibrate) navigator.vibrate(100);
 
-      showStatus("loading", "⏳ 正在自動登錄發票...", "成功抓取發票左碼！正在寫入車隊試算表...");
+      showStatus("loading", "⏳ 正在自動登錄發票...", "成功抓取發票 (" + invNo + ")！正在寫入車隊試算表...");
 
       var reqUrl = gasEndpoint + (gasEndpoint.indexOf("?") === -1 ? "?" : "&") +
         "action=submit_fuel_qr&qrText=" + encodeURIComponent(decodedText) +
@@ -288,23 +310,32 @@
       fetch(reqUrl, { method: "GET", redirect: "follow" })
         .then(function(r) { return r.json(); })
         .then(function(res) {
-          isProcessing = false;
           if (res && res.success) {
-            showStatus("success", "✅ 登錄成功！", (res.message || "油單已寫入試算表") + "\n\n視窗即將自動關閉...");
-            setTimeout(function() { closeApp(); }, 2000);
+            successCount++;
+            var badge = document.getElementById("scanCountBadge");
+            if (badge) {
+              badge.style.display = "inline-block";
+              badge.innerText = "已登錄 " + successCount + " 張";
+            }
+            showStatus(
+              "success",
+              "✅ 第 " + successCount + " 張登錄成功！",
+              (res.message || "油單已寫入試算表") + "\n\n👇 若還有發票請點「繼續掃描下一張」，全部掃完再點「關閉視窗」"
+            );
           } else {
             showStatus("error", "⚠️ 無法登錄", (res && res.message) ? res.message : "發票格式或統編未符合車隊規範。");
           }
         })
         .catch(function(err) {
-          isProcessing = false;
+          delete scannedInvoices[invNo];
           showStatus("error", "❌ 系統通訊異常", "連線至車隊後台失敗，請確認網路或 GAS 部署權限。\n錯誤：" + (err.message || err));
         });
     }
 
     function resumeScanning() {
-      isProcessing = false;
       document.getElementById("statusOverlay").style.display = "none";
+      document.getElementById("liveHint").innerText = "🟢 請對準下一張發票【左側 QR Code】...";
+      isProcessing = false;
       startLiveCamera();
     }
 
